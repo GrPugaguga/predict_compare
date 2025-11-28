@@ -3,6 +3,16 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+
+  /* Platform Colors */
+  --polymarket-color: #1452f0;
+  --kalshi-color: #09c285;
+  /* Original #ecedf8 is too light; using a primary brand color for better visibility */
+  --manifold-color: #4338ca; 
+
+  --shadow-polymarket: #1452f033;
+  --shadow-kalshi: #09c28533;
+  --shadow-manifold: #4338ca33;
 }
 
 @theme inline {

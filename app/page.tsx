@@ -1,65 +1,146 @@
-import Image from "next/image";
+'use client';
+
+import { useState, useEffect, useCallback } from 'react';
+import EventCard from '@/components/EventCard';
+import SearchInput from '@/components/SearchInput';
+import CompareTable, { MatchedEvent } from '@/components/CompareTable';
+import PlatformFilter, { PlatformSelection } from '@/components/PlatformFilter';
+import { MarketEvent } from '@/lib/compare_service/dto';
+import { findBestMatch, Searchable } from '@/lib/bm25';
+
+const SEARCH_THRESHOLD = 0.01;
+
+async function fetcher(url: string): Promise<MarketEvent[] | null> {
+  try {
+    const res = await fetch(url, { cache: 'no-store' });
+    if (!res.ok) {
+      console.error(`Failed to fetch ${url}:`, await res.text());
+      return null;
+    }
+    const data = await res.json();
+    if (data.message) {
+      console.error(`API at ${url} returned an error:`, data.message);
+      return null;
+    }
+    return data;
+  } catch (error) {
+    console.error(`An error occurred while fetching ${url}:`, error);
+    return null;
+  }
+}
 
 export default function Home() {
+  const [trends, setTrends] = useState<MarketEvent[]>([]);
+  const [searchResults, setSearchResults] = useState<MatchedEvent[] | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSearching, setIsSearching] = useState(false);
+  const [selectedPlatforms, setSelectedPlatforms] = useState<PlatformSelection>({
+    polymarket: true,
+    kalshi: true,
+    manifold: true,
+  });
+
+  useEffect(() => {
+    const loadTrends = async () => {
+      setIsLoading(true);
+      const data = await fetcher('/api/trends');
+      if (data) {
+        data.sort((a, b) => b.volume - a.volume);
+        setTrends(data);
+      }
+      setIsLoading(false);
+    };
+    loadTrends();
+  }, []);
+
+  const handleSearch = useCallback(async (query: string) => {
+    if (!query) {
+      setSearchResults(null);
+      return;
+    }
+    setIsSearching(true);
+    const rawEvents = await fetcher(`/api/search?q=${encodeURIComponent(query)}`);
+    const finalResults: MatchedEvent[] = [];
+    if (rawEvents) {
+      for (const event of rawEvents) {
+        if (event.markets.length === 1) {
+          const bestMatch = findBestMatch(query, [{ id: 'main', text: event.title }]);
+          if (bestMatch && bestMatch.score > SEARCH_THRESHOLD) {
+            finalResults.push({ event, score: bestMatch.score, displayTitle: event.title });
+          }
+        } else {
+          const searchableMarkets: Searchable[] = event.markets.map((market, index) => ({
+            id: index.toString(),
+            text: `${event.title} ${market.title}`,
+          }));
+          const bestMarketMatch = findBestMatch(query, searchableMarkets);
+          if (bestMarketMatch && bestMarketMatch.score > SEARCH_THRESHOLD) {
+            const bestMarketIndex = parseInt(bestMarketMatch.id, 10);
+            const bestMarket = event.markets[bestMarketIndex];
+            const collapsedEvent: MarketEvent = { ...event, markets: [bestMarket] };
+            finalResults.push({ event: collapsedEvent, score: bestMarketMatch.score, displayTitle: bestMarket.title });
+          }
+        }
+      }
+    }
+    finalResults.sort((a, b) => b.score - a.score);
+    setSearchResults(finalResults);
+    setIsSearching(false);
+  }, []);
+  
+  const handlePlatformChange = (platform: keyof PlatformSelection, isChecked: boolean) => {
+    setSelectedPlatforms(prev => ({ ...prev, [platform]: isChecked }));
+  };
+
+  const filteredTrends = trends.filter(trend => selectedPlatforms[trend.platform]);
+  const dataToDisplay = searchResults !== null ? searchResults : filteredTrends;
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
+    <main className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+      <div className="mb-8">
+        <h1 className="text-3xl font-bold tracking-tight text-gray-900 mb-4">
+          Search Markets
+        </h1>
+        <SearchInput onSearchChange={handleSearch} />
+      </div>
+      
+      {isSearching ? <p className="text-center">Searching...</p> : (
+        <>
+          {searchResults !== null ? (
+            <>
+              <h2 className="text-2xl font-bold tracking-tight text-gray-900 mb-6">
+                Search Results
+              </h2>
+              <CompareTable results={searchResults} />
+            </>
+          ) : (
+            <>
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-2xl font-bold tracking-tight text-gray-900">
+                  Trending Markets
+                </h2>
+                <PlatformFilter selectedPlatforms={selectedPlatforms} onPlatformChange={handlePlatformChange} />
+              </div>
+              {isLoading ? <p>Loading trends...</p> : (
+                filteredTrends.length > 0 ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                    {filteredTrends.map((event) => (
+                      <EventCard key={`${event.platform}-${event.link}`} event={event} />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-10 px-4 sm:px-6 lg:px-8 bg-gray-50 rounded-lg">
+                    <h3 className="text-lg font-medium text-gray-900">No trends match the filter</h3>
+                    <p className="mt-1 text-sm text-gray-500">
+                      Please select at least one platform to view trending markets.
+                    </p>
+                  </div>
+                )
+              )}
+            </>
+          )}
+        </>
+      )}
+    </main>
   );
 }
